@@ -1,6 +1,6 @@
-# v20-python-samples
+# Forex Vursiv
 
-This repo contains a suite of Python sample code that desmonstrates the use of
+This repo contains a suite of Python code that uses the
 OANDA's v20 REST API along with OANDA's v20 bindings for Python.
 
 ## Setup
