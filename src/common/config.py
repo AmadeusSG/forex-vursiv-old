@@ -3,6 +3,7 @@ import yaml
 import os
 import sys
 import v20
+from vursiv.storage import S3InstrumentStore, FileStore
 
 from common import input
 
@@ -16,7 +17,7 @@ DEFAULT_ENV = "V20_CONF"
 #
 # The default path for the v20 configuration file
 #
-DEFAULT_PATH = "~/.v20.conf"
+DEFAULT_PATH = "~/forex-vursiv/.v20.conf"
 
 
 class ConfigPathError(Exception):
@@ -67,6 +68,9 @@ class Config(object):
         self.active_account = None
         self.path = None
         self.datetime_format = "RFC3339"
+        self.storage = None
+        self.aws_access_key = None
+        self.aws_secret_key = None
 
     def __str__(self):
         """
@@ -84,8 +88,11 @@ class Config(object):
         s += "accounts:\n"
         for a in self.accounts:
             s += "- {}\n".format(a)
-        s += "active_account: {}".format(self.active_account)
-
+        s += "active_account: {}\n".format(self.active_account)
+        s += "aws_access_key: {}\n".format(self.aws_access_key)
+        s += "aws_secret_key: {}\n".format(self.aws_secret_key)
+        s += "storage: {}\n".format(self.storage)
+    
         return s
 
     def dump(self, path):
@@ -127,6 +134,11 @@ class Config(object):
                     "active_account", self.active_account
                 )
                 self.datetime_format = y.get("datetime_format", self.datetime_format)
+                
+                self.aws_access_key = y.get("aws_access_key", self.aws_access_key)
+                self.aws_secret_key = y.get("aws_secret_key", self.aws_secret_key)
+                self.storage = y.get("storage", self.storage)
+
         except:
             raise ConfigPathError(path)
 
@@ -153,6 +165,13 @@ class Config(object):
             raise ConfigValueError("account")
         if self.datetime_format is None:
             raise ConfigValueError("datetime_format")
+        
+        if self.aws_access_key is None:
+            raise ConfigValueError("aws_access_key")
+        if self.aws_secret_key is None:
+            raise ConfigValueError("aws_secret_key")
+        if self.storage is None:
+            raise ConfigValueError("storage")            
 
     def update_from_input(self):
         """
@@ -273,6 +292,10 @@ class Config(object):
             "Select Time Format",
             index
         )
+            
+        self.aws_access_key = input.get_string("Enter aws access key", self.aws_access_key)
+        self.aws_secret_key = input.get_string("Enter aws secret key", self.aws_secret_key)
+        self.storage = input.get_string("Enter s3 bucket or root file for storage", self.storage)
 
     def create_context(self):
         """
@@ -302,6 +325,20 @@ class Config(object):
             datetime_format=self.datetime_format
         )
 
+        return ctx
+        
+    def create_storage_context(self):
+        if self.storage[:5] == 's3://':
+            ctx = S3InstrumentStore(
+                self.aws_access_key,
+                self.aws_secret_key,
+                self.storage[5:]
+            )
+        elif self.storage[:7] == 'file://':
+            ctx = FileStore(self.storage[7:])    
+        else: 
+            raise Exception('unknown storage url '+self.storage)
+        
         return ctx
 
 
