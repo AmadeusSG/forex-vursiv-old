@@ -8,12 +8,27 @@ from dateutil.relativedelta import relativedelta
 import dateutil.parser
 from v20.instrument import Candlestick
 import time
+import numpy as np
+import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 def price_to_csv(data):
     return ','.join([str(data.o),str(data.h),str(data.l),str(data.c)])
+
+def price_to_dict(prefix, data):
+    dic= {prefix+'_open':float(data.o), prefix+'_high':float(data.h), prefix+'_low':float(data.l), prefix+'_close':float(data.c)}
+    return dic
     
 def candle_to_csv(candle):
     return ','.join([candle.time, str(candle.volume), str(candle.complete), price_to_csv(candle.bid), price_to_csv(candle.ask), price_to_csv(candle.mid)])
+
+def candle_to_dict(source, instrument, granularity, candle):
+    candletime = dateutil.parser.parse(candle.time)
+    return {'source': source, 'instrument':instrument, 'granularity':granularity, \
+        'time': candle.time, 'year': candletime.year, 'month': candletime.month, 'day': candletime.day, 'hour': candletime.hour,\
+        'volume': str(candle.volume), 'complete': bool(candle.complete), \
+        **price_to_dict('bid', candle.bid), **price_to_dict('ask', candle.ask), **price_to_dict('mid', candle.mid)}
 
 def price_from_csv(str):
     data = str.split(',')
@@ -117,7 +132,7 @@ def main():
     # contents of the config file.
     #
     api = args.config.create_context()
-    output = args.config.create_storage_context()
+    fs = args.config.create_file_system()
 
     kwargs = {}
 
@@ -179,15 +194,11 @@ def main():
                         print("failing after {} tries".format(count))
                         try_again = False
                         
-                    
-                    
-                    
-                
             for candle in candles:
                 yield candle
             
    
-    def write_batch(hourly, begin, instrument, batch, output):
+    def write_csv(hourly, begin, instrument, batch, output):
         if hourly:
             key =  "oanda/{:02d}/{:02d}/{:02d}/{:02d}/{}_CANDLES_{}.csv".format(begin.year, begin.month, begin.day, begin.hour, instrument, args.granularity)
             print('writing', str(len(batch)), 'lines to', key)
@@ -196,6 +207,19 @@ def main():
             key =  "oanda/{:02d}/{:02d}/{:02d}/{}_CANDLES_{}.csv".format(begin.year, begin.month, begin.day, instrument, args.granularity)
             print('writing', str(len(batch)), 'lines to', key)
             output.write(key, '\n'.join(batch)) 
+    
+    def write_parquet(hourly, batch, fs):
+        if len(batch):
+            try:
+                df = pd.DataFrame(batch)
+                table = pa.Table.from_pandas(df)
+                cols = ['source', 'granularity', 'instrument', 'year', 'month', 'day']
+                if hourly: 
+                    cols.append('hour')
+                pq.write_to_dataset(table, root_path='forex-vursiv/candles', partition_cols=cols, filesystem=fs)
+            except Exception as e:
+                print('error in saving batch:', batch)
+                raise e
             
     # get the begin and end
     if args.to_time:
@@ -228,14 +252,14 @@ def main():
                 previous_batch = current_batch
                 
             if previous_batch is None or previous_batch == current_batch:
-                batch.append(candle_to_csv(candle))
+                batch.append(candle_to_dict('oanda', instrument, args.granularity, candle))
             else:
-                write_batch(args.hourly, current_batch, instrument, batch, output)
+                write_parquet(args.hourly, batch, fs)
+                
                 batch = []   
                 previous_batch = current_batch
-        
-        if len(batch) > 0:
-            write_batch(args.hourly, current_batch, instrument, batch, output)   
+
+        write_parquet(args.hourly, batch, fs)   
 
 if __name__ == "__main__":
     main()
